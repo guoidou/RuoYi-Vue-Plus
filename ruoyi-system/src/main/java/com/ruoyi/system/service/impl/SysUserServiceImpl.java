@@ -1,19 +1,25 @@
 package com.ruoyi.system.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.ObjectUtil;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.ruoyi.common.constant.UserConstants;
 import com.ruoyi.common.core.domain.PageQuery;
+import com.ruoyi.common.core.domain.entity.SysDept;
 import com.ruoyi.common.core.domain.entity.SysRole;
 import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.exception.ServiceException;
+import com.ruoyi.common.helper.DataBaseHelper;
 import com.ruoyi.common.helper.LoginHelper;
+import com.ruoyi.common.utils.StreamUtils;
 import com.ruoyi.common.utils.StringUtils;
-import com.ruoyi.common.utils.spring.SpringUtils;
 import com.ruoyi.system.domain.SysPost;
 import com.ruoyi.system.domain.SysUserPost;
 import com.ruoyi.system.domain.SysUserRole;
@@ -27,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Map;
 
 /**
  * 用户 业务层处理
@@ -40,6 +46,7 @@ import java.util.stream.Collectors;
 public class SysUserServiceImpl implements ISysUserService {
 
     private final SysUserMapper baseMapper;
+    private final SysDeptMapper deptMapper;
     private final SysRoleMapper roleMapper;
     private final SysPostMapper postMapper;
     private final SysUserRoleMapper userRoleMapper;
@@ -47,7 +54,7 @@ public class SysUserServiceImpl implements ISysUserService {
 
     @Override
     public TableDataInfo<SysUser> selectPageUserList(SysUser user, PageQuery pageQuery) {
-        Page<SysUser> page = baseMapper.selectPageUserList(pageQuery.build(), user);
+        Page<SysUser> page = baseMapper.selectPageUserList(pageQuery.build(), this.buildQueryWrapper(user));
         return TableDataInfo.build(page);
     }
 
@@ -59,7 +66,28 @@ public class SysUserServiceImpl implements ISysUserService {
      */
     @Override
     public List<SysUser> selectUserList(SysUser user) {
-        return baseMapper.selectUserList(user);
+        return baseMapper.selectUserList(this.buildQueryWrapper(user));
+    }
+
+    private Wrapper<SysUser> buildQueryWrapper(SysUser user) {
+        Map<String, Object> params = user.getParams();
+        QueryWrapper<SysUser> wrapper = Wrappers.query();
+        wrapper.eq("u.del_flag", UserConstants.USER_NORMAL)
+            .eq(ObjectUtil.isNotNull(user.getUserId()), "u.user_id", user.getUserId())
+            .like(StringUtils.isNotBlank(user.getUserName()), "u.user_name", user.getUserName())
+            .eq(StringUtils.isNotBlank(user.getStatus()), "u.status", user.getStatus())
+            .like(StringUtils.isNotBlank(user.getPhonenumber()), "u.phonenumber", user.getPhonenumber())
+            .between(params.get("beginTime") != null && params.get("endTime") != null,
+                "u.create_time", params.get("beginTime"), params.get("endTime"))
+            .and(ObjectUtil.isNotNull(user.getDeptId()), w -> {
+                List<SysDept> deptList = deptMapper.selectList(new LambdaQueryWrapper<SysDept>()
+                    .select(SysDept::getDeptId)
+                    .apply(DataBaseHelper.findInSet(user.getDeptId(), "ancestors")));
+                List<Long> ids = StreamUtils.toList(deptList, SysDept::getDeptId);
+                ids.add(user.getDeptId());
+                w.in("u.dept_id", ids);
+            });
+        return wrapper;
     }
 
     /**
@@ -70,7 +98,13 @@ public class SysUserServiceImpl implements ISysUserService {
      */
     @Override
     public TableDataInfo<SysUser> selectAllocatedList(SysUser user, PageQuery pageQuery) {
-        Page<SysUser> page = baseMapper.selectAllocatedList(pageQuery.build(), user);
+        QueryWrapper<SysUser> wrapper = Wrappers.query();
+        wrapper.eq("u.del_flag", UserConstants.USER_NORMAL)
+            .eq(ObjectUtil.isNotNull(user.getRoleId()), "r.role_id", user.getRoleId())
+            .like(StringUtils.isNotBlank(user.getUserName()), "u.user_name", user.getUserName())
+            .eq(StringUtils.isNotBlank(user.getStatus()), "u.status", user.getStatus())
+            .like(StringUtils.isNotBlank(user.getPhonenumber()), "u.phonenumber", user.getPhonenumber());
+        Page<SysUser> page = baseMapper.selectAllocatedList(pageQuery.build(), wrapper);
         return TableDataInfo.build(page);
     }
 
@@ -82,7 +116,14 @@ public class SysUserServiceImpl implements ISysUserService {
      */
     @Override
     public TableDataInfo<SysUser> selectUnallocatedList(SysUser user, PageQuery pageQuery) {
-        Page<SysUser> page = baseMapper.selectUnallocatedList(pageQuery.build(), user);
+        List<Long> userIds = userRoleMapper.selectUserIdsByRoleId(user.getRoleId());
+        QueryWrapper<SysUser> wrapper = Wrappers.query();
+        wrapper.eq("u.del_flag", UserConstants.USER_NORMAL)
+            .and(w -> w.ne("r.role_id", user.getRoleId()).or().isNull("r.role_id"))
+            .notIn(CollUtil.isNotEmpty(userIds), "u.user_id", userIds)
+            .like(StringUtils.isNotBlank(user.getUserName()), "u.user_name", user.getUserName())
+            .like(StringUtils.isNotBlank(user.getPhonenumber()), "u.phonenumber", user.getPhonenumber());
+        Page<SysUser> page = baseMapper.selectUnallocatedList(pageQuery.build(), wrapper);
         return TableDataInfo.build(page);
     }
 
@@ -95,6 +136,17 @@ public class SysUserServiceImpl implements ISysUserService {
     @Override
     public SysUser selectUserByUserName(String userName) {
         return baseMapper.selectUserByUserName(userName);
+    }
+
+    /**
+     * 通过手机号查询用户
+     *
+     * @param phonenumber 手机号
+     * @return 用户对象信息
+     */
+    @Override
+    public SysUser selectUserByPhonenumber(String phonenumber) {
+        return baseMapper.selectUserByPhonenumber(phonenumber);
     }
 
     /**
@@ -120,7 +172,7 @@ public class SysUserServiceImpl implements ISysUserService {
         if (CollUtil.isEmpty(list)) {
             return StringUtils.EMPTY;
         }
-        return list.stream().map(SysRole::getRoleName).collect(Collectors.joining(","));
+        return StreamUtils.join(list, SysRole::getRoleName);
     }
 
     /**
@@ -135,7 +187,7 @@ public class SysUserServiceImpl implements ISysUserService {
         if (CollUtil.isEmpty(list)) {
             return StringUtils.EMPTY;
         }
-        return list.stream().map(SysPost::getPostName).collect(Collectors.joining(","));
+        return StreamUtils.join(list, SysPost::getPostName);
     }
 
     /**
@@ -209,7 +261,7 @@ public class SysUserServiceImpl implements ISysUserService {
         if (!LoginHelper.isAdmin()) {
             SysUser user = new SysUser();
             user.setUserId(userId);
-            List<SysUser> users = SpringUtils.getAopProxy(this).selectUserList(user);
+            List<SysUser> users = this.selectUserList(user);
             if (CollUtil.isEmpty(users)) {
                 throw new ServiceException("没有权限访问用户数据！");
             }
@@ -351,20 +403,7 @@ public class SysUserServiceImpl implements ISysUserService {
      * @param user 用户对象
      */
     public void insertUserRole(SysUser user) {
-        Long[] roles = user.getRoleIds();
-        if (ObjectUtil.isNotNull(roles)) {
-            // 新增用户与角色管理
-            List<SysUserRole> list = new ArrayList<SysUserRole>();
-            for (Long roleId : roles) {
-                SysUserRole ur = new SysUserRole();
-                ur.setUserId(user.getUserId());
-                ur.setRoleId(roleId);
-                list.add(ur);
-            }
-            if (list.size() > 0) {
-                userRoleMapper.insertBatch(list);
-            }
-        }
+        this.insertUserRole(user.getUserId(), user.getRoleIds());
     }
 
     /**
@@ -374,18 +413,16 @@ public class SysUserServiceImpl implements ISysUserService {
      */
     public void insertUserPost(SysUser user) {
         Long[] posts = user.getPostIds();
-        if (ObjectUtil.isNotNull(posts)) {
+        if (ArrayUtil.isNotEmpty(posts)) {
             // 新增用户与岗位管理
-            List<SysUserPost> list = new ArrayList<SysUserPost>();
+            List<SysUserPost> list = new ArrayList<>(posts.length);
             for (Long postId : posts) {
                 SysUserPost up = new SysUserPost();
                 up.setUserId(user.getUserId());
                 up.setPostId(postId);
                 list.add(up);
             }
-            if (list.size() > 0) {
-                userPostMapper.insertBatch(list);
-            }
+            userPostMapper.insertBatch(list);
         }
     }
 
@@ -396,18 +433,16 @@ public class SysUserServiceImpl implements ISysUserService {
      * @param roleIds 角色组
      */
     public void insertUserRole(Long userId, Long[] roleIds) {
-        if (ObjectUtil.isNotNull(roleIds)) {
+        if (ArrayUtil.isNotEmpty(roleIds)) {
             // 新增用户与角色管理
-            List<SysUserRole> list = new ArrayList<SysUserRole>();
+            List<SysUserRole> list = new ArrayList<>(roleIds.length);
             for (Long roleId : roleIds) {
                 SysUserRole ur = new SysUserRole();
                 ur.setUserId(userId);
                 ur.setRoleId(roleId);
                 list.add(ur);
             }
-            if (list.size() > 0) {
-                userRoleMapper.insertBatch(list);
-            }
+            userRoleMapper.insertBatch(list);
         }
     }
 

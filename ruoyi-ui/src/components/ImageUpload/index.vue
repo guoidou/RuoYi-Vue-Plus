@@ -44,6 +44,7 @@
 
 <script>
 import { getToken } from "@/utils/auth";
+import { listByIds, delOss } from "@/api/system/oss";
 
 export default {
   props: {
@@ -86,15 +87,21 @@ export default {
   },
   watch: {
     value: {
-      handler(val) {
+      async handler(val) {
         if (val) {
           // 首先将值转为数组
-          const list = Array.isArray(val) ? val : this.value.split(',');
+          let list;
+          if (Array.isArray(val)) {
+            list = val;
+          } else {
+            await listByIds(val).then(res => {
+              list = res.data;
+            })
+          }
           // 然后将数组转为对象数组
           this.fileList = list.map(item => {
-            if (typeof item === "string") {
-              item = { name: item, url: item };
-            }
+            // 此处name使用ossId 防止删除出现重名
+            item = { name: item.ossId, url: item.url, ossId: item.ossId };
             return item;
           });
         } else {
@@ -117,6 +124,8 @@ export default {
     handleRemove(file, fileList) {
       const findex = this.fileList.map(f => f.name).indexOf(file.name);
       if(findex > -1) {
+        let ossId = this.fileList[findex].ossId;
+        delOss(ossId);
         this.fileList.splice(findex, 1);
         this.$emit("input", this.listToString(this.fileList));
       }
@@ -124,7 +133,7 @@ export default {
     // 上传成功回调
     handleUploadSuccess(res) {
       if (res.code == 200) {
-        this.uploadList.push({ name: res.data.fileName, url: res.data.url });
+        this.uploadList.push({ name: res.data.fileName, url: res.data.url, ossId: res.data.ossId });
         if (this.uploadList.length === this.number) {
           this.fileList = this.fileList.concat(this.uploadList);
           this.uploadList = [];
@@ -187,10 +196,10 @@ export default {
       let strs = "";
       separator = separator || ",";
       for (let i in list) {
-        strs += list[i].url + separator;
+        strs += list[i].ossId + separator;
       }
-      return strs != '' ? strs.substr(0, strs.length - 1) : '';
-    }
+      return strs != "" ? strs.substr(0, strs.length - 1) : "";
+    },
   }
 };
 </script>

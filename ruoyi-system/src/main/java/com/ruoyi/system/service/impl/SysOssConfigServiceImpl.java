@@ -7,7 +7,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.google.common.collect.Lists;
 import com.ruoyi.common.constant.UserConstants;
 import com.ruoyi.common.core.domain.PageQuery;
 import com.ruoyi.common.core.page.TableDataInfo;
@@ -63,7 +62,7 @@ public class SysOssConfigServiceImpl implements ISysOssConfigService {
     }
 
     @Override
-    public SysOssConfigVo queryById(Integer ossConfigId) {
+    public SysOssConfigVo queryById(Long ossConfigId) {
         return baseMapper.selectVoById(ossConfigId);
     }
 
@@ -95,9 +94,10 @@ public class SysOssConfigServiceImpl implements ISysOssConfigService {
         SysOssConfig config = BeanUtil.toBean(bo, SysOssConfig.class);
         validEntityBeforeSave(config);
         LambdaUpdateWrapper<SysOssConfig> luw = new LambdaUpdateWrapper<>();
-        luw.set(StringUtils.isBlank(config.getPrefix()), SysOssConfig::getPrefix, "");
-        luw.set(StringUtils.isBlank(config.getRegion()), SysOssConfig::getRegion, "");
-        luw.set(StringUtils.isBlank(config.getExt1()), SysOssConfig::getExt1, "");
+        luw.set(ObjectUtil.isNull(config.getPrefix()), SysOssConfig::getPrefix, "");
+        luw.set(ObjectUtil.isNull(config.getRegion()), SysOssConfig::getRegion, "");
+        luw.set(ObjectUtil.isNull(config.getExt1()), SysOssConfig::getExt1, "");
+        luw.set(ObjectUtil.isNull(config.getRemark()), SysOssConfig::getRemark, "");
         luw.eq(SysOssConfig::getOssConfigId, config.getOssConfigId());
         return setConfigCache(baseMapper.update(config, luw) > 0, config);
     }
@@ -119,14 +119,14 @@ public class SysOssConfigServiceImpl implements ISysOssConfigService {
                 throw new ServiceException("系统内置, 不可删除!");
             }
         }
-        List<SysOssConfig> list = Lists.newArrayList();
+        List<SysOssConfig> list = CollUtil.newArrayList();
         for (Long configId : ids) {
             SysOssConfig config = baseMapper.selectById(configId);
             list.add(config);
         }
         boolean flag = baseMapper.deleteBatchIds(ids) > 0;
         if (flag) {
-            list.stream().forEach(sysOssConfig -> {
+            list.forEach(sysOssConfig -> {
                 RedisUtils.deleteObject(getCacheKey(sysOssConfig.getConfigKey()));
             });
         }
